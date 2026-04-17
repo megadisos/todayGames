@@ -9,6 +9,9 @@ dist/
 page_dump.html
 page_text.txt
 
+# Persisted WhatsApp pinned message IDs
+.last-pinned.json
+
 # Environment
 .env
 .env.*
