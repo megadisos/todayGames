@@ -12,7 +12,7 @@ export class WhatsAppSender {
 
   /** List of WhatsApp group IDs to send messages to. */
   private readonly groupIds: string[] = [
-    "120363046159302281@g.us", // Pruebas bot
+    "120363046159302281@g.us","573195885466-1450139322@g.us" // Pruebas bot
   ];
 
   /** File used to persist the last pinned message ID per group. */
