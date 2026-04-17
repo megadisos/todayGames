@@ -1,0 +1,25 @@
+node_modules/
+dist/
+
+# WhatsApp session data
+.wwebjs_auth/
+.wwebjs_cache/
+
+# Debug/temp files
+page_dump.html
+page_text.txt
+
+# Environment
+.env
+.env.*
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
