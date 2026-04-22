@@ -67,6 +67,15 @@ export class TablePrinter {
       return "No se encontraron partidos para hoy.";
     }
 
+    const after10pm = this.isAfter10pm();
+    const visibleMatches = after10pm
+      ? matches.filter((m) => m.score !== "vs")
+      : matches;
+
+    if (visibleMatches.length === 0) {
+      return "No se encontraron partidos para hoy.";
+    }
+
     const title = this.getTitle();
     const lines: string[] = [];
     lines.push(`🤖 ⚽ *${title}* ⚽`);
@@ -74,7 +83,7 @@ export class TablePrinter {
 
     let lastLeague = "";
 
-    for (const m of matches) {
+    for (const m of visibleMatches) {
       if (m.league && m.league !== lastLeague) {
         lastLeague = m.league;
         const short = this.shortLeague(m.league);
@@ -86,7 +95,7 @@ export class TablePrinter {
       const { icon, label } = this.getStatusInfo(m.status);
       lines.push("");
 
-      if (this.isAfter10pm()) {
+      if (after10pm) {
         // After 10 PM: results only, skip status for finished games
         lines.push(`${icon} ${m.homeTeam} *${m.score}* ${m.awayTeam}`);
         if (label !== "Jugado") {
@@ -102,7 +111,7 @@ export class TablePrinter {
 
     lines.push("");
     lines.push("━━━━━━━━━━━━━━━━━━━━");
-    lines.push(`📊 *Total:* ${matches.length} partido(s)`);
+    lines.push(`📊 *Total:* ${visibleMatches.length} partido(s)`);
 
     return lines.join("\n");
   }

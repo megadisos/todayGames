@@ -19,7 +19,11 @@ export class WhatsAppSender {
   private readonly pinnedRecordFile = ".last-pinned.json";
 
   constructor() {
-    this.client = new Client({
+    this.client = this.createClient();
+  }
+
+  private createClient(): Client {
+    return new Client({
       authStrategy: new LocalAuth({ dataPath: ".wwebjs_auth" }),
       puppeteer: {
         headless: true,
@@ -30,13 +34,46 @@ export class WhatsAppSender {
 
   /**
    * Initializes the WhatsApp client and waits until it's ready.
+   * Retries on timeout or transient failures by recreating the client.
    * Displays a QR code in the terminal if the session is not yet authenticated.
-   * @param timeoutMs - Maximum time to wait for connection (default: 60s).
+   * @param timeoutMs - Maximum time to wait per connection attempt (default: 60s).
+   * @param maxRetries - Number of attempts before giving up (default: 3).
    */
-  async connect(timeoutMs = 60000): Promise<void> {
+  async connect(timeoutMs = 60000, maxRetries = 3): Promise<void> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (attempt > 1) {
+        console.log(`Reintentando conexión (intento ${attempt}/${maxRetries})...`);
+        await this.resetClient();
+      }
+
+      try {
+        await this.tryConnect(timeoutMs);
+        return;
+      } catch (err) {
+        lastError = err as Error;
+        console.error(`Error conectando a WhatsApp: ${lastError.message}`);
+      }
+    }
+
+    throw lastError ?? new Error("No se pudo conectar a WhatsApp");
+  }
+
+  private tryConnect(timeoutMs: number): Promise<void> {
     return new Promise((resolve, reject) => {
+      let finished = false;
+      const finish = (fn: () => void): void => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        fn();
+      };
+
       const timer = setTimeout(() => {
-        reject(new Error(`WhatsApp connection timed out after ${timeoutMs / 1000}s`));
+        finish(() =>
+          reject(new Error(`WhatsApp connection timed out after ${timeoutMs / 1000}s`))
+        );
       }, timeoutMs);
 
       this.client.on("qr", (qr: string) => {
@@ -44,25 +81,39 @@ export class WhatsAppSender {
         qrcode.generate(qr, { small: true });
       });
 
-      this.client.on("authenticated", () => {
+      this.client.once("authenticated", () => {
         console.log("Sesión autenticada.");
       });
 
-      this.client.on("ready", () => {
-        clearTimeout(timer);
-        console.log("WhatsApp conectado.");
-        this.ready = true;
-        resolve();
+      this.client.once("ready", () => {
+        finish(() => {
+          console.log("WhatsApp conectado.");
+          this.ready = true;
+          resolve();
+        });
       });
 
-      this.client.on("auth_failure", (msg: string) => {
-        clearTimeout(timer);
-        reject(new Error(`Autenticación fallida: ${msg}`));
+      this.client.once("auth_failure", (msg: string) => {
+        finish(() => reject(new Error(`Autenticación fallida: ${msg}`)));
       });
 
       console.log("Conectando a WhatsApp...");
-      this.client.initialize();
+      this.client.initialize().catch((err: unknown) => {
+        finish(() =>
+          reject(err instanceof Error ? err : new Error(String(err)))
+        );
+      });
     });
+  }
+
+  private async resetClient(): Promise<void> {
+    try {
+      await this.client.destroy();
+    } catch {
+      // ignore — partial state from a failed attempt
+    }
+    this.ready = false;
+    this.client = this.createClient();
   }
 
   /**
