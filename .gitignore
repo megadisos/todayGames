@@ -12,6 +12,9 @@ page_text.txt
 # Persisted WhatsApp pinned message IDs
 .last-pinned.json
 
+# Last execution log (overwritten on each run)
+last-execution.log
+
 # Environment
 .env
 .env.*
