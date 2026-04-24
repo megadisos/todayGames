@@ -119,11 +119,18 @@ export class WhatsAppSender {
   /**
    * Sends a message to all configured groups.
    * Iterates through groupIds, sending to each one individually.
-   * If one group fails, it logs the error and continues with the next.
+   * Retries each group up to `maxAttempts` times on transient failures.
+   * If all retries for a group fail, logs the error and continues with the next.
    * Waits 5 seconds after sending for delivery before returning.
    * @param message - The text message to send.
+   * @param maxAttempts - Number of send attempts per group (default: 5).
+   * @param retryDelayMs - Delay between retries (default: 10s).
    */
-  async sendToGroups(message: string): Promise<void> {
+  async sendToGroups(
+    message: string,
+    maxAttempts = 5,
+    retryDelayMs = 10000
+  ): Promise<void> {
     if (!this.ready) {
       throw new Error("WhatsApp client is not ready. Call connect() first.");
     }
@@ -131,34 +138,27 @@ export class WhatsAppSender {
     const record = this.loadPinnedRecord();
 
     for (const groupId of this.groupIds) {
+      const sent = await this.sendWithRetry(groupId, message, maxAttempts, retryDelayMs);
+      if (!sent) continue;
+
+      const { chat, sentMessage } = sent;
+
       try {
-        console.log(`Abriendo chat ${groupId}...`);
-        const chat = await this.client.getChatById(groupId);
-
+        // Pin the message for 24 hours (valid durations: 86400, 604800, 2592000)
         await this.unpinPrevious(groupId, record);
+        await sentMessage.pin(86400);
+        console.log(`Mensaje fijado en "${chat.name}".`);
 
-        console.log(`Enviando mensaje a "${chat.name}"...`);
-        const sentMessage = await chat.sendMessage(message);
-        console.log(`Mensaje enviado a "${chat.name}".`);
-
-        try {
-          // Pin the message for 24 hours (valid durations: 86400, 604800, 2592000)
-          await sentMessage.pin(86400);
-          console.log(`Mensaje fijado en "${chat.name}".`);
-
-          const newId = this.getMessageId(sentMessage);
-          if (newId) {
-            record[groupId] = newId;
-            this.savePinnedRecord(record);
-          }
-        } catch (pinErr) {
-          console.error(
-            `Error fijando mensaje en "${chat.name}":`,
-            (pinErr as Error).message
-          );
+        const newId = this.getMessageId(sentMessage);
+        if (newId) {
+          record[groupId] = newId;
+          this.savePinnedRecord(record);
         }
-      } catch (err) {
-        console.error(`Error enviando a ${groupId}:`, (err as Error).message);
+      } catch (pinErr) {
+        console.error(
+          `Error fijando mensaje en "${chat.name}":`,
+          (pinErr as Error).message
+        );
       }
     }
 
@@ -166,6 +166,48 @@ export class WhatsAppSender {
     console.log("Esperando entrega de mensajes...");
     await new Promise((r) => setTimeout(r, 5000));
     console.log("Listo.");
+  }
+
+  /**
+   * Attempts to open the chat and send the message, retrying on failure.
+   * Returns the chat and sent message on success, or null if all attempts fail.
+   */
+  private async sendWithRetry(
+    groupId: string,
+    message: string,
+    maxAttempts: number,
+    retryDelayMs: number
+  ): Promise<{ chat: any; sentMessage: any } | null> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        console.log(
+          `Abriendo chat ${groupId}${attempt > 1 ? ` (intento ${attempt}/${maxAttempts})` : ""}...`
+        );
+        const chat = await this.client.getChatById(groupId);
+
+        console.log(`Enviando mensaje a "${chat.name}"...`);
+        const sentMessage = await chat.sendMessage(message);
+        console.log(`Mensaje enviado a "${chat.name}".`);
+        return { chat, sentMessage };
+      } catch (err) {
+        lastError = err as Error;
+        console.error(
+          `Error enviando a ${groupId} (intento ${attempt}/${maxAttempts}):`,
+          lastError.message
+        );
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, retryDelayMs));
+        }
+      }
+    }
+
+    console.error(
+      `Falló el envío a ${groupId} tras ${maxAttempts} intentos:`,
+      lastError?.message ?? "unknown"
+    );
+    return null;
   }
 
   /**
