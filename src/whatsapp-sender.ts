@@ -291,12 +291,40 @@ export class WhatsAppSender {
   }
 
   /**
-   * Closes the WhatsApp client connection and releases resources.
+   * Closes the WhatsApp client and forces the underlying puppeteer browser
+   * to exit. Runs even if connect() never reached the "ready" state, so a
+   * partially-initialized client doesn't leak a chrome subprocess.
    */
   async disconnect(): Promise<void> {
-    if (this.ready) {
+    // Capture the puppeteer browser ref before destroy() detaches it.
+    const browser: any = (this.client as any).pupBrowser;
+
+    try {
       await this.client.destroy();
-      console.log("WhatsApp desconectado.");
+    } catch (err) {
+      console.warn(`Error al destruir cliente: ${(err as Error).message}`);
     }
+    this.ready = false;
+
+    if (browser) {
+      try {
+        if (typeof browser.close === "function") {
+          await browser.close();
+        }
+      } catch (err) {
+        console.warn(`Error cerrando navegador: ${(err as Error).message}`);
+      }
+
+      try {
+        const proc = typeof browser.process === "function" ? browser.process() : null;
+        if (proc && !proc.killed && proc.exitCode === null) {
+          proc.kill("SIGKILL");
+        }
+      } catch {
+        // best effort
+      }
+    }
+
+    console.log("WhatsApp desconectado.");
   }
 }
