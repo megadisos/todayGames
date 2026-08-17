@@ -5,6 +5,9 @@ dist/
 .wwebjs_auth/
 .wwebjs_cache/
 
+# Corrupted profile left by a crashed run; removable only with `chkdsk E: /f`
+_wwebjs_auth_corrupto/
+
 # Debug/temp files
 page_dump.html
 page_text.txt
@@ -12,8 +15,12 @@ page_text.txt
 # Persisted WhatsApp pinned message IDs
 .last-pinned.json
 
-# Last execution log (overwritten on each run)
+# Last execution log (overwritten on each run) and its append-only history
 last-execution.log
+history.log
+
+# Group list dumped by `npm run groups`
+groups.txt
 
 # Environment
 .env

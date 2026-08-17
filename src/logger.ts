@@ -7,13 +7,20 @@ import * as fs from "fs";
  */
 export class Logger {
   private stream: fs.WriteStream | null = null;
+  private history: fs.WriteStream | null = null;
 
   /**
-   * Opens (truncates) the log file and patches console methods to tee output.
+   * Opens the log files and patches console methods to tee output.
    * @param filePath - Path to the log file; previous contents are discarded.
+   * @param historyPath - Optional append-only log kept across runs. Without it
+   *   only the newest run survives, so an unattended failure is erased by the
+   *   next successful run before anyone can read it.
    */
-  init(filePath: string): void {
+  init(filePath: string, historyPath?: string): void {
     this.stream = fs.createWriteStream(filePath, { flags: "w", encoding: "utf-8" });
+    if (historyPath) {
+      this.history = fs.createWriteStream(historyPath, { flags: "a", encoding: "utf-8" });
+    }
 
     const tee = (
       original: (...args: unknown[]) => void,
@@ -21,10 +28,12 @@ export class Logger {
     ): ((...args: unknown[]) => void) => {
       return (...args: unknown[]): void => {
         original(...args);
-        const line = args
+        const text = args
           .map((a) => (typeof a === "string" ? a : this.stringify(a)))
           .join(" ");
-        this.stream?.write(`[${new Date().toISOString()}] [${level}] ${line}\n`);
+        const line = `[${new Date().toISOString()}] [${level}] ${text}\n`;
+        this.stream?.write(line);
+        this.history?.write(line);
       };
     };
 
@@ -33,12 +42,17 @@ export class Logger {
     console.error = tee(console.error.bind(console), "ERROR");
   }
 
-  /** Flushes and closes the log stream. */
+  /** Flushes and closes the log streams. */
   async close(): Promise<void> {
-    const s = this.stream;
-    if (!s) return;
+    const streams = [this.stream, this.history].filter(
+      (s): s is fs.WriteStream => s !== null
+    );
     this.stream = null;
-    await new Promise<void>((resolve) => s.end(resolve));
+    this.history = null;
+
+    await Promise.all(
+      streams.map((s) => new Promise<void>((resolve) => s.end(resolve)))
+    );
   }
 
   private stringify(value: unknown): string {

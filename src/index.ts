@@ -1,10 +1,30 @@
+import { releaseProfileLock } from "./browser-lock";
 import { GamesScraper } from "./games-scraper";
 import { Logger } from "./logger";
 import { TablePrinter } from "./table-printer";
 import { WhatsAppSender } from "./whatsapp-sender";
 
 const logger = new Logger();
-logger.init("last-execution.log");
+logger.init("last-execution.log", "history.log");
+
+/**
+ * Hard ceiling for a single run. This job is scheduled, so nobody is watching:
+ * a run that hangs stays alive holding the chrome profile and blocks every
+ * later run (and, with "ignore new instance", the scheduled task itself).
+ * Exiting loudly is always better than lingering.
+ */
+const MAX_RUNTIME_MS = 10 * 60 * 1000;
+
+const watchdog = setTimeout(() => {
+  console.error(
+    `Tiempo máximo de ejecución superado (${MAX_RUNTIME_MS / 60000} min). Forzando salida.`
+  );
+  // Release the profile before dying, so the next run starts clean.
+  releaseProfileLock();
+  process.exit(1);
+}, MAX_RUNTIME_MS);
+// Do not let the watchdog itself keep the process alive.
+watchdog.unref();
 
 /**
  * Main entry point.
@@ -24,10 +44,11 @@ async function main(): Promise<void> {
 
   if (matches.length === 0) return;
 
-  // Connect to WhatsApp and send formatted message
-  await whatsapp.connect();
-
+  // Connect to WhatsApp and send formatted message.
+  // connect() is inside the try so a failed connection still runs disconnect():
+  // an attempt that timed out may have left a chrome process holding the profile.
   try {
+    await whatsapp.connect();
     const message = printer.formatWhatsApp(matches);
     await whatsapp.sendToGroups(message);
   } finally {
@@ -37,11 +58,14 @@ async function main(): Promise<void> {
 
 main()
   .catch((err: unknown) => {
-    const message = err instanceof Error ? err.message : String(err);
-    console.error("Error:", message);
+    // Log the stack: errors thrown inside the WhatsApp Web page surface as a
+    // minified one-letter message (e.g. "r") with no context of their own.
+    const detail = err instanceof Error ? (err.stack ?? err.message) : String(err);
+    console.error("Error:", detail);
     process.exitCode = 1;
   })
   .finally(async () => {
+    clearTimeout(watchdog);
     console.log(`=== Ejecución finalizada: ${new Date().toISOString()} ===`);
     await logger.close();
   });
